@@ -1,9 +1,9 @@
 """Training Pipeline."""
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
+import warnings
 
-from jaxtyping import Int
 import torch
-from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
@@ -12,14 +12,17 @@ from transformer_lens import HookedTransformer
 from sparse_autoencoder.activation_store.base_store import ActivationStore
 from sparse_autoencoder.autoencoder.model import SparseAutoencoder
 from sparse_autoencoder.optimizer.adam_with_reset import AdamWithReset
-from sparse_autoencoder.source_data.abstract_dataset import (
-    SourceDataset,
-    TorchTokenizedPrompts,
-)
+from sparse_autoencoder.source_data.abstract_dataset import SourceDataset, TorchTokenizedPrompts
 from sparse_autoencoder.train.generate_activations import generate_activations
 from sparse_autoencoder.train.resample_neurons import resample_dead_neurons
 from sparse_autoencoder.train.sweep_config import SweepParametersRuntime
 from sparse_autoencoder.train.train_autoencoder import train_autoencoder
+
+
+if TYPE_CHECKING:
+    from sparse_autoencoder.tensor_types import NeuronActivity
+
+DEFAULT_RESAMPLE_N = 819_200
 
 
 def stateful_dataloader_iterable(
@@ -113,10 +116,8 @@ def pipeline(  # noqa: PLR0913
 
     total_steps: int = 0
     activations_since_resampling: int = 0
-    neuron_activity: Int[Tensor, " learned_features"] = torch.zeros(
-        autoencoder.n_learned_features,
-        dtype=torch.int32,
-        device=device,
+    neuron_activity: NeuronActivity = torch.zeros(
+        autoencoder.n_learned_features, dtype=torch.int32, device=device
     )
     total_activations: int = 0
 
@@ -169,14 +170,30 @@ def pipeline(  # noqa: PLR0913
             progress_bar.update(len(activation_store))
 
             # Resample neurons if required
+            if len(activation_store) < DEFAULT_RESAMPLE_N:
+                warn_str = (
+                    f"Warning: activation store len {len(activation_store)} is less than "
+                    f"DEFAULT_RESAMPLE_N ({DEFAULT_RESAMPLE_N}). Resampling with"
+                    f"num_resample_inputs as {len(activation_store)}."
+                )
+                warnings.warn(
+                    warn_str,
+                    stacklevel=2,
+                )
+                num_resample_inputs = len(activation_store)
+            else:
+                num_resample_inputs = DEFAULT_RESAMPLE_N
+
             if activations_since_resampling >= resample_frequency:
                 progress_bar.set_postfix({"Current mode": "resampling"})
                 activations_since_resampling = 0
+
                 resample_dead_neurons(
                     neuron_activity=neuron_activity,
                     store=activation_store,
                     autoencoder=autoencoder,
                     sweep_parameters=sweep_parameters,
+                    num_inputs=num_resample_inputs,
                 )
                 learned_activations_fired_count.zero_()
                 optimizer.reset_state_all_parameters()
