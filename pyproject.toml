@@ -163,6 +163,13 @@
                 "PT004",  # Fixtures don't return anything
                 "S101",   # Assert is needed in PyTest
                 "TCH001", # Don't need to mark type-only imports
+
+                #tmp for branch
+                "ANN001",
+                "T201",
+                "D103",
+                "E501",
+                "F841",
             ]
 
         [tool.ruff.lint.pydocstyle]
